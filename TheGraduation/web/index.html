@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interactive Spider Web</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: rgba(248, 248, 255, 0.92);
+      --glow: #f8f8ff;
+      --matrix: rgba(0, 255, 70, 0.8);
+      --background: radial-gradient(circle at 20% 20%, #0a0a0f, #040406 50%, #010103 100%);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--background);
+      color: var(--ink);
+      font-family: "Inter", "SF Pro Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      cursor: default;
+    }
+
+    #matrix {
+      z-index: 0;
+      mix-blend-mode: screen;
+      opacity: 0.45;
+    }
+
+    #web {
+      z-index: 1;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      text-align: center;
+      padding: 2rem;
+      background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.02), transparent 50%);
+      z-index: 3;
+    }
+
+    .overlay h1 {
+      font-size: clamp(2.5rem, 4vw + 1rem, 4rem);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 0 0 0.5rem;
+      text-shadow: 0 0 15px rgba(95, 255, 210, 0.35);
+    }
+
+    .overlay p {
+      margin: 0;
+      color: rgba(248, 248, 255, 0.75);
+      font-size: clamp(1rem, 1vw + 0.5rem, 1.25rem);
+    }
+
+    .cursor-ring {
+      position: fixed;
+      width: 32px;
+      height: 32px;
+      border: 2px solid var(--glow);
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      mix-blend-mode: screen;
+      filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.45));
+      transition: opacity 160ms ease-out;
+      z-index: 4;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="matrix"></canvas>
+  <canvas id="web"></canvas>
+  <div class="overlay">
+    <div>
+      <h1>Weave the Web</h1>
+      <p>Move your cursor to stretch the strands &mdash; the closer you get, the larger the web grows.</p>
+    </div>
+  </div>
+  <div id="cursor" class="cursor-ring"></div>
+
+  <script>
+    const canvas = document.getElementById("web");
+    const ctx = canvas.getContext("2d");
+    const matrixCanvas = document.getElementById("matrix");
+    const mctx = matrixCanvas.getContext("2d");
+    const cursorRing = document.getElementById("cursor");
+
+    const state = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      center: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      radials: 18,
+      rings: 10,
+      baseRadius: Math.min(window.innerWidth, window.innerHeight) * 0.45,
+      noiseOffset: 0,
+      mouse: { x: window.innerWidth / 2, y: window.innerHeight / 2, active: false },
+      matrix: { columns: [], fontSize: 16 },
+    };
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function resize() {
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+      state.center = { x: state.width / 2, y: state.height / 2 };
+      state.baseRadius = Math.min(state.width, state.height) * 0.45;
+
+      canvas.width = state.width * dpr;
+      canvas.height = state.height * dpr;
+      canvas.style.width = `${state.width}px`;
+      canvas.style.height = `${state.height}px`;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      matrixCanvas.width = state.width * dpr;
+      matrixCanvas.height = state.height * dpr;
+      matrixCanvas.style.width = `${state.width}px`;
+      matrixCanvas.style.height = `${state.height}px`;
+      mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      mctx.fillStyle = "rgba(0, 0, 0, 1)";
+      mctx.fillRect(0, 0, state.width, state.height);
+
+      const columns = Math.floor(state.width / state.matrix.fontSize);
+      state.matrix.columns = new Array(columns).fill(0);
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function drawMatrix() {
+      mctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+      mctx.fillRect(0, 0, state.width, state.height);
+
+      mctx.fillStyle = "var(--matrix)";
+      mctx.font = `${state.matrix.fontSize}px "Fira Code", "SFMono-Regular", ui-monospace, monospace`;
+      state.matrix.columns.forEach((y, index) => {
+        const text = Math.random() > 0.5 ? "1" : "0";
+        const x = index * state.matrix.fontSize;
+        mctx.fillText(text, x, y * state.matrix.fontSize);
+
+        if (y * state.matrix.fontSize > state.height && Math.random() > 0.975) {
+          state.matrix.columns[index] = 0;
+        } else {
+          state.matrix.columns[index]++;
+        }
+      });
+    }
+
+    function drawWeb(time) {
+      ctx.clearRect(0, 0, state.width, state.height);
+
+      const { radials, rings, baseRadius, center, mouse } = state;
+      const angleStep = (Math.PI * 2) / radials;
+      const points = [];
+      const timeShift = Math.sin(time * 0.001) * 0.08;
+
+      for (let ring = 1; ring <= rings; ring++) {
+        const radiusFraction = ring / rings;
+        const ringRadius = baseRadius * radiusFraction;
+        const ringPoints = [];
+
+        for (let i = 0; i < radials; i++) {
+          const angle = angleStep * i;
+          const baseX = center.x + Math.cos(angle) * ringRadius;
+          const baseY = center.y + Math.sin(angle) * ringRadius;
+
+          const distToMouse = Math.hypot(baseX - mouse.x, baseY - mouse.y);
+          const influenceRadius = baseRadius * 0.8;
+          const falloff = Math.exp(-(distToMouse ** 2) / (2 * influenceRadius ** 2));
+          const grow = 1 + falloff * 0.6; // Cursor boost
+
+          const drift = Math.sin(angle * 3 + time * 0.001 + ring * 0.3) * timeShift * baseRadius;
+          const x = center.x + Math.cos(angle) * ringRadius * grow + Math.cos(angle) * drift;
+          const y = center.y + Math.sin(angle) * ringRadius * grow + Math.sin(angle) * drift;
+
+          ringPoints.push({ x, y });
+        }
+
+        points.push(ringPoints);
+      }
+
+      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+
+      // Draw rings
+      points.forEach((ringPoints) => {
+        ctx.beginPath();
+        ringPoints.forEach((pt, idx) => {
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      });
+
+      // Draw radials
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.48)";
+      for (let i = 0; i < radials; i++) {
+        ctx.beginPath();
+        ctx.moveTo(center.x, center.y);
+        points.forEach((ringPoints) => {
+          const pt = ringPoints[i];
+          ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+      }
+
+      // Center node
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawCursor() {
+      cursorRing.style.left = `${state.mouse.x}px`;
+      cursorRing.style.top = `${state.mouse.y}px`;
+      cursorRing.style.opacity = state.mouse.active ? "1" : "0";
+    }
+
+    function animate(time = 0) {
+      drawMatrix();
+      drawWeb(time);
+      drawCursor();
+      requestAnimationFrame(animate);
+    }
+
+    function handlePointer(event) {
+      const { clientX, clientY, type } = event;
+      state.mouse.x = clientX;
+      state.mouse.y = clientY;
+      state.mouse.active = type !== "pointerleave";
+    }
+
+    resize();
+    animate();
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("pointermove", handlePointer);
+    window.addEventListener("pointerdown", handlePointer);
+    window.addEventListener("pointerup", handlePointer);
+    window.addEventListener("pointerleave", handlePointer);
+  </script>
+</body>
+</html>
